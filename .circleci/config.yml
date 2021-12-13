@@ -1,0 +1,84 @@
+version: 2.1
+jobs:
+  build:
+    docker:
+      # image with node, npm and yarn installed
+      - image: circleci/node:13.7.0-buster
+    steps:
+      # checkout workspace to repo code
+      - checkout
+
+      # restore workspace if available
+      # to skip re-installing node_modules
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "yarn.lock" }}
+            - v1-dependencies-
+
+      # install dependencies
+      - run: yarn
+
+      # save node_modules to cache
+      - save_cache:
+          paths:
+            - node_modules
+            - ~/.npm 
+            - ~/.cache
+          key: v1-dependencies-{{ checksum "yarn.lock" }}
+
+
+      # build code to production file
+      - run: REACT_APP_API_HOST=${API_HOST} yarn build
+
+      - persist_to_workspace:
+          root: .
+          paths:
+            - build
+
+  deploy:
+    docker:
+      - image: circleci/node:13.7.0-buster
+    steps:
+
+      - attach_workspace:
+          at: .
+
+      # access ssh key used to access 
+      # deployment server
+      - add_ssh_keys:
+          fingerprints:
+          - "${SSH_KEY}"
+
+      - run:
+          name: 'register SSH known hosts'
+          command: |
+            mkdir -p ~/.ssh
+            echo ${SSH_KNOWN_HOST} > ~/.ssh/known_hosts
+            cat ~/.ssh/known_hosts
+
+      # scp deploy folder to remote
+      - run: scp -r ./build/* ubuntu@${HOSTNAME}:${CMS_PATH}.
+
+workflows: 
+  deploy-staging:
+    jobs:
+      - build:
+          context: kidztime-staging
+          filters:
+            branches:
+              only: staging
+      - deploy: 
+          context: kidztime-staging
+          requires:
+            - build
+  deploy-production:
+    jobs:
+      - build:
+          context: kidztime-production
+          filters:
+            branches:
+              only: master
+      - deploy: 
+          context: kidztime-production
+          requires:
+            - build
